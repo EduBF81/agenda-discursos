@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Início - Agenda de Discursos</title>
+    <link rel="stylesheet" href="./css/main.css">
+    <link rel="stylesheet" href="./css/nav.css">
+    <style>
+        main {
+            max-width: 1000px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+
+        .dashboard-section {
+            margin-bottom: 30px;
+        }
+
+        .dashboard-section h3 {
+            border-bottom: 2px solid var(--secondary-color);
+            padding-bottom: 5px;
+            margin-bottom: 15px;
+            color: var(--main-color);
+        }
+
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: #fff;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border-left: 5px solid var(--secondary-color);
+            transition: transform 0.2s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+        }
+
+        .card-old {
+            border-left-color: #888;
+            opacity: 0.8;
+        }
+
+        .card h4 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+
+        .card p {
+            margin: 5px 0;
+            font-size: 0.9em;
+            color: #555;
+        }
+
+        .estado-vazio {
+            color: #777;
+            font-style: italic;
+        }
+    </style>
+</head>
+
+<body>
+    <header class="site-header">
+        <div class="site-brand">
+            <h1>🎙️ Agenda Discurso</h1>
+        </div>
+    </header>
+    <nav>
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="palestrantes.html">Oradores</a></li>
+            <li><a href="agendar.html">Agendar</a></li>
+            <li><a href="consulta.html">Consultar</a></li>
+            <li><a href="historico.html">S-99</a></li>
+            <li><a href="#" id="btnSair">Sair</a></li>
+        </ul>
+    </nav>
+
+    <main>
+        <h2>Painel de Controle</h2>
+        <p>Acompanhe os próximos discursos programados e o histórico recente.</p>
+
+        <section class="dashboard-section">
+            <h3>Próximos Discursos</h3>
+            <div id="grid-proximos" class="grid-container">
+                <p class="estado-vazio">A carregar...</p>
+            </div>
+        </section>
+
+        <section class="dashboard-section">
+            <h3>Último Discurso Realizado</h3>
+            <div id="grid-ultimo" class="grid-container">
+                <p class="estado-vazio">A carregar...</p>
+            </div>
+        </section>
+    </main>
+
+    <script type="module">
+        import { db } from './js/firebase-config.js';
+        import { collection, getDocs, addDoc } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
+        import { getAuth, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js';
+        //autenticação de usuario
+        const auth = getAuth();
+
+        // 2. GUARDIÃO DE ROTA (Protege a página)
+        onAuthStateChanged(auth, (user) => {
+            if (!user) {
+                // Se não estiver logado, redireciona imediatamente
+                window.location.replace('login.html');
+            } else {
+                // Se estiver logado, o "else" garante que o user é verdadeiro.
+                // 1º Liberamos a interface (tira o display: none)
+                document.getElementById('conteudoPrincipal').style.display = 'block';
+                // Se estiver logado, pode chamar as funções de inicialização da página aqui
+                // Exemplo: carregarPalestrantes(); ou carregarAgendamentos();
+                console.log("Utilizador autenticado:", user.email);
+                // 3º Chamamos as funções que buscam os dados no banco
+                carregarPalestrantes(); // ou inicializarDashboard();
+            }
+        });
+        // 3. FUNÇÃO DE LOGOFF (Sair)
+        document.getElementById('btnSair').addEventListener('click', async (event) => {
+            event.preventDefault(); // Evita que o link '# ' salte a página
+            try {
+                await signOut(auth);
+                // Não é preciso redirecionar manualmente aqui.
+                // O onAuthStateChanged acima vai detetar que saiu e fará o redirecionamento.
+            } catch (error) {
+                console.error("Erro ao terminar sessão:", error);
+                alert("Ocorreu um erro ao sair.");
+            }
+        });
+
+        document.addEventListener("DOMContentLoaded", inicializarDashboard);
+
+        async function inicializarDashboard() {
+            const discursos = await carregarDiscursosFirebase();
+            const { proximos, ultimo } = classificarDiscursos(discursos);
+
+            renderizarGrid("grid-proximos", proximos, false);
+            renderizarGrid("grid-ultimo", ultimo ? [ultimo] : [], true);
+        }
+
+        async function carregarDiscursosFirebase() {
+            try {
+                const querySnapshot = await getDocs(collection(db, "agendamentos"));
+                const discursos = [];
+
+                querySnapshot.forEach((doc) => {
+                    discursos.push({ id: doc.id, ...doc.data() });
+                });
+
+                // Ordena por data (crescente)
+                return discursos.sort((a, b) => new Date(a.dataDiscurso) - new Date(b.dataDiscurso));
+            } catch (error) {
+                console.error("Erro ao ler Firebase", error);
+                return [];
+            }
+        }
+
+        function classificarDiscursos(discursos) {
+            const hoje = new Date();
+            hoje.setHours(0, 0, 0, 0); // Zera a hora para comparar apenas datas justas
+
+            const proximos = [];
+            const passados = [];
+
+            discursos.forEach(d => {
+                const dataD = new Date(d.dataDiscurso + "T00:00:00");
+                if (dataD >= hoje) {
+                    proximos.push(d);
+                } else {
+                    passados.push(d);
+                }
+            });
+
+            // O último realizado será o mais recente dentre os passados
+            const ultimo = passados.length > 0 ? passados[passados.length - 1] : null;
+
+            return { proximos, ultimo };
+        }
+
+        function renderizarGrid(containerId, lista, isOld) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = "";
+
+            if (lista.length === 0) {
+                container.innerHTML = `<p class="estado-vazio">Nenhum discurso nesta categoria.</p>`;
+                return;
+            }
+
+            lista.forEach(discurso => {
+                const card = document.createElement("div");
+                card.className = `card ${isOld ? 'card-old' : ''}`;
+
+                const partesData = discurso.dataDiscurso.split('-');
+                const dataFormatada = partesData.length === 3 ? `${partesData[2]}/${partesData[1]}/${partesData[0]}` : discurso.dataDiscurso;
+
+                card.innerHTML = `
+                    <h4>${escaparHTML(dataFormatada)}</h4>
+                    <p><strong>Orador:</strong> ${escaparHTML(discurso.palestranteNome)}</p>
+                    <p><strong>Congregação:</strong> ${escaparHTML(discurso.congregacao || 'Não informada')}</p>
+                    <p><strong>Tema:</strong> ${escaparHTML(discurso.temaSelecionado)}</p>
+                    <p><strong>Cântico:</strong> ${escaparHTML(discurso.cantico.toString())}</p>
+                `;
+
+                container.appendChild(card);
+            });
+        }
+
+        function escaparHTML(texto) {
+            if (!texto) return "";
+            const div = document.createElement('div');
+            div.textContent = texto;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+
+</html>

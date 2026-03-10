@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agendar Discurso</title>
+    <link rel="stylesheet" href="./css/main.css">
+    <link rel="stylesheet" href="./css/nav.css">
+    <link rel="stylesheet" href="./css/buttons.css">
+    <style>
+        main {
+            max-width: 800px;
+            margin: 20px auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        h2 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        fieldset {
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            padding: 15px;
+        }
+
+        legend {
+            font-weight: bold;
+            color: #444;
+        }
+
+        label {
+            display: block;
+            margin-top: 10px;
+            font-weight: bold;
+            color: #555;
+        }
+
+        select,
+        input {
+            width: 100%;
+            height: 40px;
+            margin-top: 5px;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: #fff;
+        }
+
+        select:disabled {
+            background-color: #e9ecef;
+            cursor: not-allowed;
+        }
+
+        /* Ajuste para inputs menores */
+        .linha-curta {
+            display: flex;
+            gap: 15px;
+        }
+
+        .linha-curta>div {
+            flex: 1;
+        }
+    </style>
+</head>
+
+<body>
+    <header class="site-header">
+        <div class="site-brand">
+            <h1>🎙️ Agenda Discurso</h1>
+        </div>
+    </header>
+    <nav>
+        <ul>
+            <li><a href="index.html">Início</a></li>
+            <li><a href="palestrantes.html">Oradores</a></li>
+            <li><a href="agendar.html">Agendar</a></li>
+            <li><a href="consulta.html">Consultar</a></li>
+            <li><a href="historico.html">S-99</a></li>
+            <li><a href="#" id="btnSair">Sair</a></li>
+        </ul>
+    </nav>
+
+    <main>
+        <h2>Agendar Discurso</h2>
+        <form id="formAgendamento">
+            <fieldset>
+                <legend>Seleção de Orador e Tema</legend>
+
+                <label for="selectPalestrante">Selecione o Orador:</label>
+                <select id="selectPalestrante" name="palestranteId" required>
+                    <option value="">A carregar oradores do Firebase...</option>
+                </select>
+
+                <label for="selectTema">Selecione o Tema:</label>
+                <select id="selectTema" name="tema" required disabled>
+                    <option value="">Selecione um orador primeiro</option>
+                </select>
+            </fieldset>
+
+            <fieldset>
+                <legend>Detalhes do Agendamento</legend>
+                <div class="linha-curta">
+                    <div>
+                        <label for="dataDiscurso">Data do Discurso:</label>
+                        <input type="date" id="dataDiscurso" name="dataDiscurso" required>
+                    </div>
+                    <div>
+                        <label for="cantico">Cântico Associado:</label>
+                        <input type="number" id="cantico" name="cantico" min="1" required placeholder="Nº do cântico">
+                    </div>
+                </div>
+            </fieldset>
+
+            <button type="submit" id="btnAgendar">Confirmar Agendamento</button>
+        </form>
+    </main>
+
+    <script type="module">
+        import { db } from './js/firebase-config.js';
+        import { collection, getDocs, addDoc } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
+        import { getAuth, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js';
+        //autenticação de usuario
+        const auth = getAuth();
+
+        // 2. GUARDIÃO DE ROTA (Protege a página)
+        onAuthStateChanged(auth, (user) => {
+            if (!user) {
+                // Se não estiver logado, redireciona imediatamente
+                window.location.replace('login.html');
+            } else {
+                // Se estiver logado, o "else" garante que o user é verdadeiro.
+                // 1º Liberamos a interface (tira o display: none)
+                document.getElementById('conteudoPrincipal').style.display = 'block';
+                // Se estiver logado, pode chamar as funções de inicialização da página aqui
+                // Exemplo: carregarPalestrantes(); ou carregarAgendamentos();
+                console.log("Utilizador autenticado:", user.email);
+                // 3º Chamamos as funções que buscam os dados no banco
+                carregarPalestrantes(); // ou inicializarDashboard();
+            }
+        });
+        // 3. FUNÇÃO DE LOGOFF (Sair)
+        document.getElementById('btnSair').addEventListener('click', async (event) => {
+            event.preventDefault(); // Evita que o link '# ' salte a página
+            try {
+                await signOut(auth);
+                // Não é preciso redirecionar manualmente aqui.
+                // O onAuthStateChanged acima vai detetar que saiu e fará o redirecionamento.
+            } catch (error) {
+                console.error("Erro ao terminar sessão:", error);
+                alert("Ocorreu um erro ao sair.");
+            }
+        });
+
+        // Variável global (estado) para armazenar os palestrantes após a leitura da base de dados
+        let palestrantesData = [];
+
+        // 1. Inicialização: Buscar oradores ao carregar a página
+        document.addEventListener("DOMContentLoaded", carregarPalestrantes);
+
+        async function carregarPalestrantes() {
+            const selectPalestrante = document.getElementById('selectPalestrante');
+
+            try {
+                // Busca todos os documentos da coleção 'palestrantes'
+                const querySnapshot = await getDocs(collection(db, "palestrantes"));
+                palestrantesData = []; // Limpa o array
+
+                // Prepara a opção padrão
+                selectPalestrante.innerHTML = '<option value="">-- Escolha um orador --</option>';
+
+                if (querySnapshot.empty) {
+                    selectPalestrante.innerHTML = '<option value="">Nenhum orador registado.</option>';
+                    return;
+                }
+
+                querySnapshot.forEach((doc) => {
+                    const dados = doc.data();
+                    // Armazena com o ID gerado pelo Firebase para referência futura
+                    palestrantesData.push({ id: doc.id, ...dados });
+
+                    // Adiciona ao dropdown HTML
+                    const option = document.createElement('option');
+                    option.value = doc.id;
+                    option.textContent = `${dados.nome} (${dados.congregacao})`;
+                    selectPalestrante.appendChild(option);
+                });
+
+            } catch (error) {
+                console.error("Erro ao buscar palestrantes:", error);
+                selectPalestrante.innerHTML = '<option value="">Erro ao carregar oradores</option>';
+            }
+        }
+
+        // 2. Lógica de UI: Atualizar o dropdown de temas quando mudar o orador
+        document.getElementById('selectPalestrante').addEventListener('change', function (event) {
+            const palestranteId = event.target.value;
+            const selectTema = document.getElementById('selectTema');
+
+            selectTema.innerHTML = '<option value="">-- Escolha o tema --</option>';
+
+            if (!palestranteId) {
+                selectTema.disabled = true;
+                return;
+            }
+
+            // Procura no nosso array em memória o palestrante escolhido
+            const palestranteSelecionado = palestrantesData.find(p => p.id === palestranteId);
+
+            if (palestranteSelecionado && palestranteSelecionado.temas) {
+                palestranteSelecionado.temas.forEach(tema => {
+                    const option = document.createElement('option');
+                    // Vamos guardar o texto completo do tema no valor para facilitar na hora de ler na tabela
+                    option.value = `Nº ${tema.numero} - ${tema.titulo}`;
+                    option.textContent = `Nº ${tema.numero} - ${tema.titulo}`;
+                    selectTema.appendChild(option);
+                });
+                selectTema.disabled = false;
+            } else {
+                selectTema.innerHTML = '<option value="">Orador sem temas registados</option>';
+                selectTema.disabled = true;
+            }
+        });
+
+        // 3. Gravar na Base de Dados: Submeter o Agendamento
+        document.getElementById('formAgendamento').addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            const btnAgendar = document.getElementById('btnAgendar');
+            btnAgendar.textContent = "A agendar...";
+            btnAgendar.disabled = true;
+
+            const form = event.target;
+            const palestranteId = form.palestranteId.value;
+
+            // Precisamos do nome para salvar junto (Desnormalização)
+            const palestranteSelecionado = palestrantesData.find(p => p.id === palestranteId);
+
+            try {
+                const novoAgendamento = {
+                    palestranteId: palestranteId,
+                    palestranteNome: palestranteSelecionado.nome,
+                    congregacao: palestranteSelecionado.congregacao,
+                    temaSelecionado: form.tema.value,
+                    cantico: parseInt(form.cantico.value),
+                    dataDiscurso: form.dataDiscurso.value,
+                    dataAgendamento: new Date().toISOString()
+                };
+
+                // Cria uma nova coleção chamada 'agendamentos'
+                await addDoc(collection(db, "agendamentos"), novoAgendamento);
+
+                alert("Discurso agendado com sucesso!");
+                form.reset();
+                document.getElementById('selectTema').disabled = true; // Reseta o campo de tema
+
+            } catch (error) {
+                console.error("Erro ao agendar discurso: ", error);
+                alert("Ocorreu um erro ao agendar. Verifique a consola.");
+            } finally {
+                btnAgendar.textContent = "Confirmar Agendamento";
+                btnAgendar.disabled = false;
+            }
+        });
+    </script>
+</body>
+
+</html>
